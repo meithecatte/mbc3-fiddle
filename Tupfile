@@ -1,0 +1,10 @@
+.gitignore
+
+: gfx/font.png |> rgbgfx -d 1 -o %o %f |> build/%B.1bpp {assets}
+
+: foreach src/*.asm | {assets} \
+            |> rgbasm -i build/ -i src/ -ELh -Wall -o %o %f |> build/%B.o
+: build/*.o |> rgblink -p 0xff \
+            -n mbc3.sym -o mbc3.gb %f \
+            && rgbfix -m 0x0f -jv mbc3.gb \
+            |> mbc3.gb mbc3.sym
