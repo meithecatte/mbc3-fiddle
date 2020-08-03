@@ -143,7 +143,7 @@ Start:
     ld [$9880], a
 
     ld a, $7f
-    ld [$98cd], a
+    ld [$98ca], a
 
     ld a, LCDCF_ON | LCDCF_BGON
     ldh [rLCDC], a
@@ -164,6 +164,8 @@ Start:
     ld [wWriteValue], a
     inc a
     ld [wLastLatch], a
+    ld a, $0c
+    ld [wWriteAddress], a
 
 NUM_OPTIONS EQU 2
 
@@ -200,10 +202,24 @@ MainLoop:
 
     ld a, [wCursorPos]
     and a
-    jr z, HandleLatch
+    jr nz, HandleWrite
     ; fallthrough
 
-NUM_WRITE_SETTINGS EQU 2
+HandleLatch:
+    ldh a, [hPressedKeys]
+    assert PADF_A == 1
+    rrca
+    jp nc, MainLoop
+    ld hl, wLastLatch
+    ld a, [hl]
+    xor 1
+    ld [hl], a
+    ld [$6000], a
+    ld hl, $9888
+    call PutHexByte
+    jr MainLoop
+
+NUM_WRITE_SETTINGS EQU 3
 
 HandleWrite:
     ld hl, wWriteCursorPos
@@ -218,11 +234,16 @@ HandleWrite:
     ld [hl], a
 .updateCursor:
     ld a, [hl]
-    add $cd
+    add $cc
+    cp $cc
+    jr nz, .gotAddress
+    ld a, $ca
+.gotAddress:
     ld l, a
     ld h, $98
     wait_vram
     xor a
+    ld [$98ca], a
     ld [$98cd], a
     ld [$98ce], a
     ld [hl], $7f
@@ -242,6 +263,8 @@ HandleWrite:
     jr z, .notUp
     ld a, [hl]
     and a
+    jr z, .incAddr
+    dec a
     ld a, 1
     jr nz, .gotIncrement
     ld a, $10
@@ -252,38 +275,46 @@ HandleWrite:
     ld hl, $98ad
     call PutHexByte
     jp MainLoop
+.incAddr:
+    ld hl, wWriteAddress
+    inc [hl]
+    ld a, [hl]
+    cp $0d
+    jr nz, .updateAddr
+    ld [hl], 8
+.updateAddr:
+    ld a, [hl]
+    ld hl, $98aa
+    call PutHexDigit
+    jp MainLoop
 .notUp:
     bit PADB_DOWN, a
     jr z, .notDown
     ld a, [hl]
     and a
+    jr z, .decAddr
+    dec a
     ld a, -1
     jr nz, .gotIncrement
     ld a, -$10
     jr .gotIncrement
+.decAddr:
+    ld hl, wWriteAddress
+    dec [hl]
+    ld a, [hl]
+    cp 7
+    jr nz, .updateAddr
+    ld [hl], $0c
+    jr .updateAddr
 .notDown:
     bit PADB_A, a
     jp z, MainLoop
     di
-    ld a, $0c
+    ld a, [wWriteAddress]
     ld [$4000], a
     ld a, [wWriteValue]
     ld [$a000], a
     ei
-    jp MainLoop
-
-HandleLatch:
-    ldh a, [hPressedKeys]
-    assert PADF_A == 1
-    rrca
-    jp nc, MainLoop
-    ld hl, wLastLatch
-    ld a, [hl]
-    xor 1
-    ld [hl], a
-    ld [$6000], a
-    ld hl, $9888
-    call PutHexByte
     jp MainLoop
 
 SECTION "PlaceString", ROM0
@@ -346,6 +377,7 @@ WriteString:
 SECTION "Variables", WRAM0
 wCursorPos: db
 wLastLatch: db
+wWriteAddress: db
 wWriteValue: db
 wWriteCursorPos: db
 
