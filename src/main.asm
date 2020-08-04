@@ -1,5 +1,37 @@
 INCLUDE "hardware.inc"
 INCLUDE "macros.inc"
+INCLUDE "structs.inc"
+
+SECTION "DMA Routine", ROM0
+OAMDMA:
+    ld a, HIGH(wShadowOAM)
+    ldh [rDMA], a
+    ld a, $28
+.wait:
+    dec a
+    jr nz, .wait
+    ret
+.end
+
+SECTION "VBlank Variables", HRAM
+hVBlankFlag: db
+hPressedKeys: db
+hHeldKeys: db
+hOAMDMA: ds OAMDMA.end - OAMDMA
+
+SECTION "Sprites", WRAM0
+    struct Sprite
+    bytes 1, YPos
+    bytes 1, XPos
+    bytes 1, Tile
+    bytes 1, Attr
+    end_struct
+
+UNION
+wShadowOAM: ds $a0
+NEXTU
+    dstruct Sprite, wMainCursor
+ENDU
 
 SECTION "VBlank", ROM0[$40]
 VBlank:
@@ -19,6 +51,8 @@ VBlank:
     dec e
     bit 3, e
     jr nz, .readLoop ; stop at 7
+
+    call hOAMDMA
 
     pop hl
     pop de
@@ -114,6 +148,24 @@ Start:
     ldh [rOBP1], a
     ldh [rWY], a
 
+    ld hl, OAMDMA
+    lb bc, OAMDMA.end - OAMDMA, LOW(hOAMDMA)
+.copyOAMDMA:
+    ld a, [hli]
+    ld [c], a
+    inc c
+    dec b
+    jr nz, .copyOAMDMA
+
+    ld hl, wShadowOAM + $a0
+    xor a
+.clearOAM:
+    dec l
+    ld [hl], a
+    jr nz, .clearOAM
+
+    call hOAMDMA ; silence BGB warning
+
     ld hl, vFont
     ld de, Font
     ld bc, Font.end - Font
@@ -127,6 +179,13 @@ Start:
     or c
     jr nz, .fontLoop
 
+    ld hl, $9800
+    xor a
+.tilemapClear:
+    ld [hli], a
+    bit 2, h ; end at $9c00
+    jr z, .tilemapClear
+
     ld hl, $9801
     ld de, HeaderString
     call PlaceString
@@ -139,13 +198,17 @@ Start:
     ld de, WriteString
     call PlaceString
 
-    ld a, "*"
-    ld [$9880], a
+    ld hl, wMainCursor_YPos
+    ld [hl], 48
+    inc l
+    ld [hl], 8
+    inc l
+    ld [hl], "*"
 
     ld a, $7f
     ld [$98ca], a
 
-    ld a, LCDCF_ON | LCDCF_BGON
+    ld a, LCDCF_ON | LCDCF_BGON | LCDCF_OBJON | LCDCF_BG8000
     ldh [rLCDC], a
 
     ld a, $0a
@@ -185,15 +248,10 @@ MainLoop:
 .newCursorPos
 
     add a
-    swap a
-    add $80
-    ld l, a
-    ld h, $98
-    wait_vram
-    xor a
-    ld [$9880], a
-    ld [$98a0], a
-    ld [hl], "*"
+    add a
+    add a
+    add 48
+    ld [wMainCursor_YPos], a
     jr MainLoop
 
 .notSelect:
@@ -361,7 +419,7 @@ Font:
     INCBIN "font.1bpp"
 .end:
 
-SECTION "vFont", VRAM[$9200]
+SECTION "vFont", VRAM[$8200]
 vFont: ds 48 * 16
 
 SECTION "Strings", ROM0
@@ -380,8 +438,3 @@ wLastLatch: db
 wWriteAddress: db
 wWriteValue: db
 wWriteCursorPos: db
-
-SECTION "HRAM Variables", HRAM
-hVBlankFlag: db
-hPressedKeys: db
-hHeldKeys: db
