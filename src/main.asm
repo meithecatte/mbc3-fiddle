@@ -17,6 +17,7 @@ SECTION "VBlank Variables", HRAM
 hVBlankFlag: db
 hPressedKeys: db
 hHeldKeys: db
+hAutoLatching: db
 hOAMDMA: ds OAMDMA.end - OAMDMA
 
 SECTION "Sprites", WRAM0
@@ -50,6 +51,15 @@ VBlank:
     push bc
     push de
     push hl
+
+    ldh a, [hAutoLatching]
+    and a
+    jr z, .dontLatch
+    xor a
+    ld [$6000], a
+    inc a
+    ld [$6000], a
+.dontLatch:
 
     ld hl, $9841
     ld e, $0c
@@ -144,6 +154,7 @@ SECTION "Header", ROM0[$104]
 
 SECTION "Start", ROM0
 Start:
+    ld sp, wStackTop
 .disableLCD:
     ldh a, [rLY]
     cp SCRN_Y
@@ -227,6 +238,7 @@ Start:
     ldh [rIE], a
     xor a
     ldh [hVBlankFlag], a
+    ldh [hAutoLatching], a
     ldh [hHeldKeys], a
     ldh [rIF], a
     ei
@@ -273,9 +285,17 @@ HandleLatch:
     jr nz, .doRight
     bit PADB_START, a
     jr z, MainLoop
-    ; TODO: enable auto
+
+    xor a
+    ld [wLatchCursor_XPos], a
+
+    ld a, 1
+    ld de, LatchString.auto
+    call .setAuto
+    jr MainLoop
 
 .doLeft:
+    call .disableAuto
     ld a, "0"
     ld [wLatchCursor_Tile], a
     ld a, 72
@@ -285,6 +305,7 @@ HandleLatch:
     jr MainLoop
 
 .doRight:
+    call .disableAuto
     ld a, "1"
     ld [wLatchCursor_Tile], a
     ld a, 88
@@ -292,6 +313,14 @@ HandleLatch:
     ld a, 1
     ld [$6000], a
     jr MainLoop
+
+.disableAuto:
+    xor a
+    ld de, LatchString.manual
+.setAuto:
+    ldh [hAutoLatching], a
+    ld hl, $98a8
+    jp PlaceString
 
 NUM_WRITE_SETTINGS EQU 10
 
@@ -398,6 +427,7 @@ HandleWrite:
 
 SECTION "PlaceString", ROM0
 PlaceString:
+    wait_vram
     ld a, [de]
     and a
     ret z
@@ -441,9 +471,18 @@ HeaderString:
     db "MBC3 RTC Fiddle", 0
 
 LatchString:
-    db "Latch: 0 1", 0
+    db "Latch: "
+.manual:
+    db "0 1 ", 0
+.auto:
+    db "auto", 0
 
 SECTION "Variables", WRAM0
 wCursorPos: db
 wWriteValue: db
 wWriteCursorPos: db
+
+STACK_SIZE EQU 64
+SECTION "Stack", WRAM0[$d000 - STACK_SIZE]
+    ds STACK_SIZE
+wStackTop:
