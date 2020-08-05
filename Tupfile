@@ -6,5 +6,7 @@
             |> rgbasm -i build/ -i src/ -ELh -Wall -o %o %f |> build/%B.o
 : build/*.o |> rgblink -p 0xff \
             -n mbc3.sym -o mbc3.gb %f \
-            && rgbfix -m 0x0f -jv mbc3.gb \
-            |> mbc3.gb mbc3.sym
+            && rgbfix -m 0x0f -jv -p 0xff mbc3.gb \
+            && cp mbc3.gb mbc3-withram.gb \
+            && rgbfix -m 0x10 -r 1 -jv -p 0xff mbc3-withram.gb \
+            |> mbc3.gb mbc3.sym mbc3-withram.gb

@@ -31,7 +31,18 @@ UNION
 wShadowOAM: ds $a0
 NEXTU
     dstruct Sprite, wMainCursor
+    dstruct Sprite, wWriteDigit1
+    dstruct Sprite, wWriteDigit2
+    dstruct Sprite, wLatchCursor
 ENDU
+
+SECTION "OAM Template", ROM0
+TemplateOAM:
+    db 40,  8, $7f, 0 ; wMainCursor
+    db 40, 16, "0", OAMF_PAL1 ; wWriteDigit1
+    db 40, 24, "0", 0         ; wWriteDigit2
+    db 56,  0, "0", OAMF_PAL1 ; wLatchCursor
+.end:
 
 SECTION "VBlank", ROM0[$40]
 VBlank:
@@ -142,11 +153,12 @@ Start:
     ldh [rLCDC], a
     ldh [rSCX], a
     ldh [rSCY], a
-    ld a, $e4
+    ld a, $e0
+    ldh [rWY], a
     ldh [rBGP], a
     ldh [rOBP0], a
+    ld a, $e4
     ldh [rOBP1], a
-    ldh [rWY], a
 
     ld hl, OAMDMA
     lb bc, OAMDMA.end - OAMDMA, LOW(hOAMDMA)
@@ -157,11 +169,21 @@ Start:
     dec b
     jr nz, .copyOAMDMA
 
-    ld hl, wShadowOAM + $a0
+    ld hl, wShadowOAM
+    ld de, TemplateOAM
+    ld b, TemplateOAM.end - TemplateOAM
+.copyOAM:
+    ld a, [de]
+    inc de
+    ld [hli], a
+    dec b
+    jr nz, .copyOAM
+
+    ld b, $a0 - (TemplateOAM.end - TemplateOAM)
     xor a
 .clearOAM:
-    dec l
-    ld [hl], a
+    ld [hli], a
+    dec b
     jr nz, .clearOAM
 
     call hOAMDMA ; silence BGB warning
@@ -171,7 +193,8 @@ Start:
     ld bc, Font.end - Font
 .fontLoop:
     ld a, [de]
-    ld [hli], a
+    ld [hl], $ff
+    inc l
     ld [hli], a
     inc de
     dec bc
@@ -190,23 +213,9 @@ Start:
     ld de, HeaderString
     call PlaceString
 
-    ld l, $81
+    ld l, $a1
     ld de, LatchString
     call PlaceString
-
-    ld l, $a1
-    ld de, WriteString
-    call PlaceString
-
-    ld hl, wMainCursor_YPos
-    ld [hl], 48
-    inc l
-    ld [hl], 8
-    inc l
-    ld [hl], "*"
-
-    ld a, $7f
-    ld [$98ca], a
 
     ld a, LCDCF_ON | LCDCF_BGON | LCDCF_OBJON | LCDCF_BG8000
     ldh [rLCDC], a
@@ -225,10 +234,6 @@ Start:
     ld [wCursorPos], a
     ld [wWriteCursorPos], a
     ld [wWriteValue], a
-    inc a
-    ld [wLastLatch], a
-    ld a, $0c
-    ld [wWriteAddress], a
 
 NUM_OPTIONS EQU 2
 
@@ -246,11 +251,8 @@ MainLoop:
     xor a
     ld [hl], a
 .newCursorPos
-
-    add a
-    add a
-    add a
-    add 48
+    swap a
+    add 40
     ld [wMainCursor_YPos], a
     jr MainLoop
 
@@ -260,55 +262,84 @@ MainLoop:
 
     ld a, [wCursorPos]
     and a
-    jr nz, HandleWrite
+    jr z, HandleWrite
     ; fallthrough
 
 HandleLatch:
     ldh a, [hPressedKeys]
-    assert PADF_A == 1
-    rrca
-    jp nc, MainLoop
-    ld hl, wLastLatch
-    ld a, [hl]
-    xor 1
-    ld [hl], a
+    bit PADB_LEFT, a
+    jr nz, .doLeft
+    bit PADB_RIGHT, a
+    jr nz, .doRight
+    bit PADB_START, a
+    jr z, MainLoop
+    ; TODO: enable auto
+
+.doLeft:
+    ld a, "0"
+    ld [wLatchCursor_Tile], a
+    ld a, 72
+    ld [wLatchCursor_XPos], a
+    xor a
     ld [$6000], a
-    ld hl, $9888
-    call PutHexByte
     jr MainLoop
 
-NUM_WRITE_SETTINGS EQU 3
+.doRight:
+    ld a, "1"
+    ld [wLatchCursor_Tile], a
+    ld a, 88
+    ld [wLatchCursor_XPos], a
+    ld a, 1
+    ld [$6000], a
+    jr MainLoop
+
+NUM_WRITE_SETTINGS EQU 10
 
 HandleWrite:
     ld hl, wWriteCursorPos
     ldh a, [hPressedKeys]
     bit PADB_RIGHT, a
     jr z, .notRight
+
     inc [hl]
     ld a, [hl]
     sub NUM_WRITE_SETTINGS
     jr nz, .updateCursor
     xor a
     ld [hl], a
+
 .updateCursor:
     ld a, [hl]
-    add $cc
-    cp $cc
-    jr nz, .gotAddress
-    ld a, $ca
-.gotAddress:
-    ld l, a
-    ld h, $98
-    wait_vram
+    srl a
+    ld b, a
+    add a
+    add b
+    add a
+    add a
+    add a
+    add 16
+    ld [wWriteDigit1_XPos], a
+    add 8
+    ld [wWriteDigit2_XPos], a
+    ld a, [hl]
+    rrca
+    ld a, OAMF_PAL1
+    jr c, .hlDigit2
+    ld [wWriteDigit1_Attr], a
     xor a
-    ld [$98ca], a
-    ld [$98cd], a
-    ld [$98ce], a
-    ld [hl], $7f
-    jr MainLoop
+    ld [wWriteDigit2_Attr], a
+    jp MainLoop
+
+.hlDigit2:
+    ld [wWriteDigit2_Attr], a
+    xor a
+    ld [wWriteDigit1_Attr], a
+    jp MainLoop
+
 .notRight:
     bit PADB_LEFT, a
     jr z, .notLeft
+
     dec [hl]
     ld a, [hl]
     inc a
@@ -319,56 +350,46 @@ HandleWrite:
 .notLeft:
     bit PADB_UP, a
     jr z, .notUp
+
     ld a, [hl]
-    and a
-    jr z, .incAddr
-    dec a
+    rrca
     ld a, 1
-    jr nz, .gotIncrement
+    jr c, .gotIncrement
     ld a, $10
 .gotIncrement:
     ld hl, wWriteValue
     add [hl]
     ld [hl], a
-    ld hl, $98ad
-    call PutHexByte
-    jp MainLoop
-.incAddr:
-    ld hl, wWriteAddress
-    inc [hl]
-    ld a, [hl]
-    cp $0d
-    jr nz, .updateAddr
-    ld [hl], 8
-.updateAddr:
-    ld a, [hl]
-    ld hl, $98aa
+    ld c, a
+    swap a
+    ld hl, wWriteDigit1_Tile
+    call PutHexDigit
+    ld a, c
+    ld l, LOW(wWriteDigit2_Tile)
     call PutHexDigit
     jp MainLoop
+
 .notUp:
     bit PADB_DOWN, a
     jr z, .notDown
+
     ld a, [hl]
-    and a
-    jr z, .decAddr
-    dec a
+    rrca
     ld a, -1
-    jr nz, .gotIncrement
+    jr c, .gotIncrement
     ld a, -$10
     jr .gotIncrement
-.decAddr:
-    ld hl, wWriteAddress
-    dec [hl]
-    ld a, [hl]
-    cp 7
-    jr nz, .updateAddr
-    ld [hl], $0c
-    jr .updateAddr
+
 .notDown:
     bit PADB_A, a
     jp z, MainLoop
+
+    ld a, [hl]
+    srl a
+    ld b, a
+    ld a, $0c
+    sub b
     di
-    ld a, [wWriteAddress]
     ld [$4000], a
     ld a, [wWriteValue]
     ld [$a000], a
@@ -384,10 +405,6 @@ PlaceString:
     inc de
     jr PlaceString
 
-SECTION "GetJoypad", ROM0
-GetJoypad:
-    ret
-
 SECTION "PutHex", ROM0
 ; Converts A to hex and stores it at [hl].
 ; Clobbers BC.
@@ -400,7 +417,7 @@ PutHexByte:
     ; fallthrough
 
 ; Converts the lower nibble of A into a hex character, and stores it in [hl].
-; The pointer is incremented. Clobbers B.
+; The pointer is incremented.
 PutHexDigit:
     and $0f
     add "0"
@@ -408,9 +425,6 @@ PutHexDigit:
     jr c, .notLetter
     add "A" - "0" - 10
 .notLetter:
-    ld b, a
-    wait_vram
-    ld a, b
     ld [hli], a
     ret
 
@@ -424,17 +438,12 @@ vFont: ds 48 * 16
 
 SECTION "Strings", ROM0
 HeaderString:
-    db "MBC3 RTC Test", 0
+    db "MBC3 RTC Fiddle", 0
 
 LatchString:
-    db "Latch: ??", 0
-
-WriteString:
-    db "Write @ 0C: 00", 0
+    db "Latch: 0 1", 0
 
 SECTION "Variables", WRAM0
 wCursorPos: db
-wLastLatch: db
-wWriteAddress: db
 wWriteValue: db
 wWriteCursorPos: db
